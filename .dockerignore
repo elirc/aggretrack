@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+storage
+docs
+e2e
+tests
+.env
+.env.*
+!.env.example
+public/sw.js
+public/swe-worker*

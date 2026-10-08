@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aggretrack_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aggretrack_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  web:
+    build: .
+    command: sh -c "pnpm db:migrate && pnpm start"
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/aggretrack_dev
+      APP_ENV: demo
+      BETTER_AUTH_SECRET: compose-demo-secret-change-me
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      SMS_DRIVER: mock
+      EMAIL_DRIVER: mock
+      PAYMENTS_DRIVER: mock
+      STORAGE_DRIVER: local
+      STORAGE_LOCAL_DIR: /app/storage
+    volumes:
+      - appstorage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: pnpm worker
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/aggretrack_dev
+      APP_ENV: demo
+      SMS_DRIVER: mock
+      EMAIL_DRIVER: mock
+      PAYMENTS_DRIVER: mock
+      STORAGE_DRIVER: local
+      STORAGE_LOCAL_DIR: /app/storage
+    volumes:
+      - appstorage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  appstorage:
