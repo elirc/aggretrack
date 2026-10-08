@@ -94,6 +94,7 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Administration",
     items: [
       { label: "Settings", href: "/settings", icon: Settings, permission: "org.settings" },
+      { label: "Master data", href: "/settings/master-data", icon: ClipboardList, permission: "master-data.read" },
       { label: "Users", href: "/settings/users", icon: Users, permission: "users.read" },
     ],
   },

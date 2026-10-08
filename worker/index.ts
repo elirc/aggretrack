@@ -1,37 +1,30 @@
-import type { Job } from "pg-boss";
 import { getBoss } from "./boss";
+import { QUEUES } from "../src/lib/jobs";
+import { handleAlertsScan } from "./jobs/alerts";
+import { handleBillingSweep } from "./jobs/billing";
+import { handleDocumentGenerate } from "./jobs/documents";
+import { handleEmailSend } from "./jobs/email";
+import { handleSmsSend } from "./jobs/sms";
 
 const WORK_OPTIONS = { batchSize: 1, pollingIntervalSeconds: 2 };
 
 async function main(): Promise<void> {
   const boss = await getBoss();
 
-  // WAVE1: replace with real handlers from worker/jobs/* (P1-D).
-
   // --- document.generate ------------------------------------------------
-  await boss.work("document.generate", WORK_OPTIONS, async (jobs: Job<object>[]) => {
-    console.log(`[worker] document.generate placeholder (${jobs.length} job[s])`);
-  });
+  await boss.work(QUEUES.DOCUMENT_GENERATE, WORK_OPTIONS, handleDocumentGenerate);
 
   // --- sms.send ----------------------------------------------------------
-  await boss.work("sms.send", WORK_OPTIONS, async (jobs: Job<object>[]) => {
-    console.log(`[worker] sms.send placeholder (${jobs.length} job[s])`);
-  });
+  await boss.work(QUEUES.SMS_SEND, WORK_OPTIONS, handleSmsSend);
 
   // --- email.send ---------------------------------------------------------
-  await boss.work("email.send", WORK_OPTIONS, async (jobs: Job<object>[]) => {
-    console.log(`[worker] email.send placeholder (${jobs.length} job[s])`);
-  });
+  await boss.work(QUEUES.EMAIL_SEND, WORK_OPTIONS, handleEmailSend);
 
   // --- alerts.scan ---------------------------------------------------------
-  await boss.work("alerts.scan", WORK_OPTIONS, async (jobs: Job<object>[]) => {
-    console.log(`[worker] alerts.scan placeholder (${jobs.length} job[s])`);
-  });
+  await boss.work(QUEUES.ALERTS_SCAN, WORK_OPTIONS, handleAlertsScan);
 
   // --- billing.sweep --------------------------------------------------------
-  await boss.work("billing.sweep", WORK_OPTIONS, async (jobs: Job<object>[]) => {
-    console.log(`[worker] billing.sweep placeholder (${jobs.length} job[s])`);
-  });
+  await boss.work(QUEUES.BILLING_SWEEP, WORK_OPTIONS, handleBillingSweep);
 
   await boss.schedule("alerts.scan", "*/15 * * * *", {}, { tz: "Africa/Lagos" });
   await boss.schedule("billing.sweep", "0 2 * * *", {}, { tz: "Africa/Lagos" });
