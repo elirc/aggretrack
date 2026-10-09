@@ -7,10 +7,6 @@ import { db } from "@/db/client";
 import * as schema from "@/db/schema";
 import { getSmsAdapter } from "@/adapters/sms";
 
-function randomOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,

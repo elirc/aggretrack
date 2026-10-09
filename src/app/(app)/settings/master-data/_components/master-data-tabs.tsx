@@ -102,10 +102,6 @@ export type MasterDataProps = {
   initialTab: MasterDataTab;
 };
 
-function InactiveBadge({ active }: { active: boolean }) {
-  return active ? null : <Badge variant="secondary">Inactive</Badge>;
-}
-
 const dash = (v: string | null | undefined) => (v ? v : "—");
 
 export function MasterDataTabs(props: MasterDataProps) {

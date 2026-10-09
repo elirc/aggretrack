@@ -8,11 +8,13 @@ import {
   commodities,
   drivers,
   expenseCategories,
+  expenses,
   grades,
   organisationSettings,
   vehicles,
   warehouses,
 } from "@/db/schema";
+import { lotIdsForTrips, recomputeLandedCost } from "@/lib/services/landedCost";
 import type { OrgContext } from "@/lib/authz/context";
 import { writeAudit } from "@/lib/audit/audit";
 import { DomainError } from "@/lib/domain/errors";
@@ -807,6 +809,23 @@ export async function updateExpenseCategory(
       before,
       after: row,
     });
+    // Flipping affects_landed_cost changes which expenses share into lot
+    // costs, so every lot touched by this category's expenses (directly or
+    // via a trip) must be re-costed.
+    if (before.affectsLandedCost !== row.affectsLandedCost) {
+      const catExpenses = await tx
+        .select({ lotId: expenses.lotId, tripId: expenses.tripId })
+        .from(expenses)
+        .where(and(eq(expenses.organisationId, ctx.orgId), eq(expenses.categoryId, row.id)));
+      const lotIds = new Set(catExpenses.map((e) => e.lotId).filter((v): v is string => !!v));
+      const tripIds = [...new Set(catExpenses.map((e) => e.tripId).filter((v): v is string => !!v))];
+      if (tripIds.length > 0) {
+        for (const id of await lotIdsForTrips(tx, ctx, tripIds)) lotIds.add(id);
+      }
+      if (lotIds.size > 0) {
+        await recomputeLandedCost(tx, ctx, [...lotIds]);
+      }
+    }
     return row;
   });
 }
