@@ -63,7 +63,7 @@ export const BAG_TYPES = [
 ] as const;
 
 export const WAREHOUSES = [
-  { key: "main", name: "Gombe Main Warehouse", location: "Bauchi Road, Gombe", capacityKg: "500000", bins: ["A1", "A2", "B1"] },
+  { key: "main", name: "Gombe Main", location: "Bauchi Road, Gombe", capacityKg: "500000", bins: ["A1", "A2", "B1"] },
   { key: "billiri", name: "Billiri Depot", location: "Tal Road, Billiri", capacityKg: "200000", bins: ["C1", "C2"] },
 ] as const;
 

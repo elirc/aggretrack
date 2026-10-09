@@ -13,14 +13,14 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"]],
   use: {
-    baseURL: "http://localhost:3100",
+    baseURL: "http://localhost:4137",
     trace: "retain-on-failure",
     viewport: { width: 360, height: 740 }, // mobile-first per spec
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 360, height: 740 } } }],
   webServer: {
-    command: "pnpm dev --port 3100",
-    url: "http://localhost:3100/api/health",
+    command: "pnpm start --port 4137",
+    url: "http://localhost:4137/api/health",
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
     env: {
@@ -31,8 +31,8 @@ export default defineConfig({
       PAYMENTS_DRIVER: "mock",
       STORAGE_DRIVER: "local",
       BETTER_AUTH_SECRET: "e2e-secret",
-      BETTER_AUTH_URL: "http://localhost:3100",
-      NEXT_PUBLIC_APP_URL: "http://localhost:3100",
+      BETTER_AUTH_URL: "http://localhost:4137",
+      NEXT_PUBLIC_APP_URL: "http://localhost:4137",
     },
   },
 });

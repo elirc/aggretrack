@@ -41,7 +41,19 @@ pnpm worker:dev              # pg-boss worker (separate terminal)
 
 Mock mode: the login OTP is always **123456**, and no external call is made. The app refuses to start with `APP_ENV=production` while any adapter driver is `mock` (`APP_ENV=demo` is the Compose default and allows mocks).
 
-Demo logins after `pnpm seed`: one user per role, phone numbers `23480000000{1..7}` (owner, manager, procurement, warehouse, sales, accountant, platform admin), password `demo1234` for the email tab.
+Demo logins after `pnpm seed` (demo org **Gombe AgriTrade**, growth plan, 60-day trial — starter's 5-user cap can't hold six role logins). Password `demo1234` on the email tab; phone OTP is `123456` in mock mode:
+
+| Role | Phone | Email |
+|---|---|---|
+| Owner | 2348000000001 | owner@demo.aggretrack.local |
+| Manager | 2348000000002 | manager@demo.aggretrack.local |
+| Procurement | 2348000000003 | procurement@demo.aggretrack.local |
+| Warehouse keeper | 2348000000004 | warehouse@demo.aggretrack.local |
+| Sales officer | 2348000000005 | sales@demo.aggretrack.local |
+| Accountant | 2348000000006 | accountant@demo.aggretrack.local |
+| Platform admin | 2348000000007 | platform@demo.aggretrack.local |
+
+The warehouse keeper is restricted to the Gombe Main warehouse; procurement is restricted to the Kwadon and Billiri buying points. Re-seed any time with `pnpm exec tsx scripts/seed.ts --reset` (guarded: only `aggretrack_dev` / `aggretrack_e2e`).
 
 ## Scripts
 
@@ -72,6 +84,7 @@ The spec said "use the current stable version and note the change" — these are
 - **shadcn/ui** no longer ships a `form` component; forms use react-hook-form + zodResolver with the `field` primitives.
 - **PDFs print "NGN"** instead of ₦ — the built-in Helvetica font has no naira glyph, and shipping no custom font keeps PDF rendering fully offline.
 - **@react-pdf/renderer is ESM-only**: the worker (tsx, CJS package) loads it through a dynamic-import shim in `src/pdf/runtime.ts`. New templates must follow the same pattern.
+- **Docker caveat**: the Compose stack (db/web/worker) ships reviewed but was built on a machine without Docker; every gate (tests, build, e2e, seed) was run against the native local setup instead.
 
 ## Architecture in one paragraph
 

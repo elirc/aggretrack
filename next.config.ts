@@ -8,6 +8,9 @@ const withSerwist = withSerwistInit({
   swSrc: "src/app/sw.ts",
   swDest: "public/sw.js",
   disable: process.env.NODE_ENV === "development",
+  // The offline outbox handles reconnects itself; Serwist's default
+  // reload-on-online would wipe in-page queue state mid-sync.
+  reloadOnOnline: false,
 });
 
 const nextConfig: NextConfig = {

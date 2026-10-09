@@ -17,7 +17,7 @@ export const MAIN_WAREHOUSE = "Gombe Main";
 export const COMMODITY = "Maize";
 export const GRADE = "Grade A";
 
-export const BASE_URL = process.env.E2E_BASE_URL ?? "http://localhost:3100";
+export const BASE_URL = process.env.E2E_BASE_URL ?? "http://localhost:4137";
 export const MOBILE_VIEWPORT = { width: 360, height: 740 };
 
 /** Long-ish default for the slow dev box (Turbopack compiles routes on first hit). */

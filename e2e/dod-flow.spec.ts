@@ -131,21 +131,26 @@ test.describe.serial("definition-of-done flow", () => {
     if (!(await wh.innerText()).includes(MAIN_WAREHOUSE)) await chooseOption(page, wh, MAIN_WAREHOUSE);
     await dialog.getByRole("button", { name: "Receive", exact: true }).click();
 
-    const done = dialog.getByRole("heading", { name: /^Received · / });
-    await expect(done).toBeVisible({ timeout: NAV_T });
-    const grnNumber = (await done.innerText()).replace(/^Received · /, "").trim();
+    // The dialog shows a success state, but the page refresh can unmount it
+    // the moment the status flips — assert on the page, which survives both
+    // paths, and close the dialog if it is still around.
+    await expect(badge(page, "Received")).toBeVisible({ timeout: NAV_T });
+    const doneButton = page.getByRole("button", { name: "Done" });
+    if (await doneButton.isVisible().catch(() => false)) await doneButton.click();
+
+    // GRN on the purchase page.
+    await expect(page.getByText("Goods received note")).toBeVisible({ timeout: T });
+    const grnNumber = (
+      await page.getByText(/^GRN-\d{4}-\d{5}$/).first().innerText()
+    ).trim();
     expect(grnNumber).not.toBe("");
 
-    const lotLink = dialog.getByRole("link").first();
+    // The line's lot link on the purchase page.
+    const lotLink = page.getByRole("link", { name: /^LOT-\d{4}-\d{5}$/ }).first();
+    await expect(lotLink).toBeVisible({ timeout: T });
     ourLotNumber = (await lotLink.innerText()).trim();
     ourLotHref = (await lotLink.getAttribute("href")) ?? "";
     expect(ourLotHref).toMatch(new RegExp(`^/stock/lots/${UUID}$`));
-    await dialog.getByRole("button", { name: "Done" }).click();
-
-    // GRN on the purchase page + received status.
-    await expect(page.getByText("Goods received note")).toBeVisible({ timeout: T });
-    await expect(page.getByText(grnNumber, { exact: true }).first()).toBeVisible();
-    await expect(badge(page, "Received")).toBeVisible({ timeout: T });
 
     // /stock: maize total grew by the net weight and the new lot is listed.
     const after = await stockKgFor(page, COMMODITY);
@@ -183,18 +188,27 @@ test.describe.serial("definition-of-done flow", () => {
     await page.getByRole("button", { name: "Auto-allocate (FIFO)" }).click();
     const dispatchBtn = page.getByRole("button", { name: /^Dispatch [\d,.]+ kg$/ });
     await expect(dispatchBtn).toBeVisible({ timeout: NAV_T });
-    await expect(dispatchBtn).toHaveText(/5,000 kg/);
+
+    // Reserved allocations must be ticked before they can be dispatched.
+    const selectAll = page.getByRole("checkbox", { name: "Select all reserved allocations" });
+    await expect(selectAll).toBeVisible({ timeout: T });
+    await selectAll.click();
+    await expect(dispatchBtn).toHaveText(/5,000 kg/, { timeout: T });
 
     await chooseFirstOption(page, page.locator("#dsp-vehicle"), /^No vehicle$/);
     await chooseFirstOption(page, page.locator("#dsp-driver"), /^No driver$/);
     await dispatchBtn.click();
 
-    const created = page.getByText(/Dispatched\. Waybill/);
-    await expect(created).toBeVisible({ timeout: NAV_T });
-    waybillNumber = (await created.locator("span").first().innerText()).trim();
-    expect(waybillNumber).not.toBe("pending");
+    // The in-form "Dispatched. Waybill …" card is ephemeral (the page refresh
+    // can unmount the dispatch form once nothing is left reserved). The
+    // order page's dispatch list is the durable evidence: a link to the
+    // dispatch carrying the WB number.
+    const wbLink = page.getByRole("link", { name: /WB-\d{4}-\d{5}/ }).first();
+    await expect(wbLink).toBeVisible({ timeout: NAV_T });
+    waybillNumber = ((await wbLink.innerText()).match(/WB-\d{4}-\d{5}/) ?? [""])[0];
+    expect(waybillNumber).not.toBe("");
 
-    await page.getByRole("link", { name: "Open waybill" }).click();
+    await wbLink.click();
     await page.waitForURL(new RegExp(`/dispatches/${UUID}$`), { timeout: NAV_T });
     dispatchUrl = new URL(page.url()).pathname;
     await expect(page.getByRole("heading", { name: waybillNumber, level: 1 })).toBeVisible({ timeout: T });
