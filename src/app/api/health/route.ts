@@ -9,5 +9,5 @@ export async function GET() {
   } catch {
     dbOk = false;
   }
-  return Response.json({ ok: dbOk, db: dbOk, version: "0.1.0" });
+  return Response.json({ ok: dbOk, db: dbOk, version: "1.0.0" });
 }

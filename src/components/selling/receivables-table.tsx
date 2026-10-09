@@ -6,9 +6,10 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { TableCell, TableRow } from "@/components/ui/table";
 
 import { naira } from "./format";
+import { BANDS, type AgeBandKey } from "./receivables-bands";
 import { ResponsiveTable } from "./responsive-table";
 
-export type AgeBandKey = "d0_30" | "d31_60" | "d61_90" | "d90_plus";
+export type { AgeBandKey } from "./receivables-bands";
 
 export type ReceivableRow = {
   customerId: string;
@@ -18,12 +19,7 @@ export type ReceivableRow = {
   invoiceCount: number;
 };
 
-export const BANDS: { key: AgeBandKey; label: string }[] = [
-  { key: "d0_30", label: "0–30 days" },
-  { key: "d31_60", label: "31–60 days" },
-  { key: "d61_90", label: "61–90 days" },
-  { key: "d90_plus", label: "90+ days" },
-];
+// BANDS moved to ./receivables-bands (shared with the server page).
 
 const right = (v: string, strong = false) => (
   <span className={`block text-right tabular-nums${strong ? " font-semibold" : ""}`}>{v}</span>

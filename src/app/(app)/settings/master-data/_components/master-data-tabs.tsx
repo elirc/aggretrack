@@ -77,17 +77,9 @@ import * as cfg from "./entity-config";
 import { ActiveToggle, EntitySection, RemoveButton } from "./entity-section";
 import { EntityForm, formatKg, kgForInput, runAction } from "./form-kit";
 
-export const MASTER_DATA_TABS = [
-  { value: "commodities", label: "Commodities" },
-  { value: "grades", label: "Grades" },
-  { value: "bag-types", label: "Bag types" },
-  { value: "warehouses", label: "Warehouses" },
-  { value: "buying-points", label: "Buying points" },
-  { value: "vehicles", label: "Vehicles" },
-  { value: "drivers", label: "Drivers" },
-  { value: "expense-categories", label: "Expense categories" },
-] as const;
-export type MasterDataTab = (typeof MASTER_DATA_TABS)[number]["value"];
+// MASTER_DATA_TABS moved to ./tabs-meta (shared with the server page).
+import { MASTER_DATA_TABS, type MasterDataTab } from "./tabs-meta";
+export type { MasterDataTab } from "./tabs-meta";
 
 export type MasterDataProps = {
   commodities: Commodity[];

@@ -8,7 +8,8 @@ import { resolveOrgContext } from "@/lib/authz/resolve";
 import { can } from "@/lib/authz/permissions";
 import * as md from "@/lib/services/masterData";
 
-import { MASTER_DATA_TABS, MasterDataTabs, type MasterDataTab } from "./_components/master-data-tabs";
+import { MasterDataTabs } from "./_components/master-data-tabs";
+import { MASTER_DATA_TABS, type MasterDataTab } from "./_components/tabs-meta";
 
 export const metadata = { title: "Master data · AggreTrack" };
 
