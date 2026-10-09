@@ -31,7 +31,9 @@ export function orgAction<S extends z.ZodType, R>(opts: {
         return { ok: false, error: "FORBIDDEN" };
       }
 
-      if (isMutating(opts.permission) && ctx.readOnly) {
+      // billing.manage is exempt from the read-only gate: paying is the only
+      // way OUT of read-only, and billing never touches business data.
+      if (isMutating(opts.permission) && ctx.readOnly && opts.permission !== "billing.manage") {
         // Subscription inactive — organisation is read only, never deleted.
         return { ok: false, error: "READ_ONLY" };
       }

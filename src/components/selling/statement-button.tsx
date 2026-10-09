@@ -1,24 +1,17 @@
 "use client";
 
-import { FileText } from "lucide-react";
+import { useParams } from "next/navigation";
 
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { StatementRangeButton } from "@/components/notifications/StatementRangeButton";
+import { generateCustomerStatementAction } from "@/actions/statements";
 
-/** Customer statement — disabled until the statements wave wires it. */
-export function StatementButton() {
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span tabIndex={0} className="inline-flex" aria-label="Statement — coming soon">
-            <Button variant="outline" className="h-11 sm:h-9" disabled>
-              <FileText /> Statement
-            </Button>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>Printable statements arrive in a later update.</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
+/**
+ * Customer statement button — period popover → PDF (P4-D). The customer page
+ * renders it without props, so the id falls back to the /customers/[id] route param.
+ */
+export function StatementButton({ customerId }: { customerId?: string } = {}) {
+  const params = useParams<{ id?: string }>();
+  const id = customerId ?? (typeof params?.id === "string" ? params.id : undefined);
+  if (!id) return null;
+  return <StatementRangeButton id={id} action={generateCustomerStatementAction} />;
 }

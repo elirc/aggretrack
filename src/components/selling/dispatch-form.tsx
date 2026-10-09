@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Truck } from "lucide-react";
+import { toast } from "sonner";
 
 import { createDispatchAction } from "@/actions/dispatches";
 import { Button } from "@/components/ui/button";
@@ -11,8 +12,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { kgToGrams } from "@/lib/domain/units";
+import { OutboxIndicator, QueuedBadge } from "@/offline/OutboxIndicator";
+import { enqueueOp, NETWORK, tryOnline } from "@/offline/outbox";
 
-import { callAction } from "./actions-client";
+import { sellingErrorMessage } from "./actions-client";
 import { kg, kgFromGrams } from "./format";
 
 export type ReservedAllocation = {
@@ -52,6 +55,7 @@ export function DispatchForm({
   const [driverId, setDriverId] = useState(NONE);
   const [clientId, setClientId] = useState(newClientId);
   const [created, setCreated] = useState<{ id: string; waybillNumber: string | null } | null>(null);
+  const [queuedKg, setQueuedKg] = useState<string | null>(null);
 
   // Keep the selection in step with the current reserved set (after refreshes).
   const liveSelected = allocations.filter((a) => selected.has(a.id));
@@ -68,14 +72,38 @@ export function DispatchForm({
 
   const submit = () =>
     startTransition(async () => {
-      const res = await callAction(createDispatchAction, {
+      const input = {
         clientId,
         salesOrderId,
         allocationIds: liveSelected.map((a) => a.id),
         vehicleId: vehicleId === NONE ? null : vehicleId,
         driverId: driverId === NONE ? null : driverId,
-      });
+      };
+      const attempt = await tryOnline(() => createDispatchAction(input));
+      if (attempt === NETWORK) {
+        // Offline → queue under the same client id (becomes the dispatch PK on sync).
+        try {
+          await enqueueOp({
+            id: clientId,
+            kind: "dispatch",
+            payload: input,
+            label: `Dispatch · ${kgFromGrams(totalG)} · ${liveSelected.length} lot${liveSelected.length === 1 ? "" : "s"}`,
+          });
+        } catch {
+          toast.error("Could not reach the server and this browser can't queue offline. Try again.");
+          return;
+        }
+        setQueuedKg(kgFromGrams(totalG));
+        setCreated(null);
+        setClientId(newClientId());
+        setSelected(new Set());
+        toast.info("Dispatch queued — will sync when you're back online");
+        return;
+      }
+      const res = attempt;
+      if (!res.ok) toast.error(sellingErrorMessage(res.error));
       if (res.ok) {
+        setQueuedKg(null);
         setCreated({ id: res.data.id, waybillNumber: res.data.waybillNumber });
         setClientId(newClientId());
         setSelected(new Set());
@@ -85,6 +113,12 @@ export function DispatchForm({
 
   return (
     <div className="flex flex-col gap-3">
+      <OutboxIndicator kind="dispatch" />
+      {queuedKg ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed p-3 text-sm">
+          <QueuedBadge /> Dispatch of {queuedKg} saved on this phone — the waybill is issued when it syncs.
+        </div>
+      ) : null}
       {created ? (
         <div
           role="status"

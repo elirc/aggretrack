@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Controller, useFieldArray, useForm, useWatch, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, TriangleAlert } from "lucide-react";
+import { CircleCheck, Plus, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { createPurchaseAction, updatePurchaseAction } from "@/actions/purchases";
@@ -18,6 +18,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { OutboxIndicator, QueuedBadge } from "@/offline/OutboxIndicator";
+import { enqueueOp, NETWORK, tryOnline } from "@/offline/outbox";
+import { useOutboxItem } from "@/offline/useOutbox";
 
 import { LineEditor, type BagTypeOption, type CommodityOption, type GradeOption } from "./line-editor";
 import {
@@ -52,7 +55,9 @@ function emptyLine(commodities: CommodityOption[], grades: GradeOption[]): LineV
  * Purchase quick entry (flagship mobile flow). The purchase id is a client
  * UUID generated once at mount, so retrying a save (flaky network) can never
  * create a second purchase — the server returns the stored one as a duplicate.
- * Offline queueing is added in Wave 4 (P4-B) around `buildPurchasePayload`.
+ * Offline (P4-B): when the device is offline or the action fails on the
+ * network, the same `buildPurchasePayload` goes to the Dexie outbox under the
+ * same id and syncs later through /api/sync (same schema, same service).
  */
 export function PurchaseForm({
   suppliers,
@@ -77,8 +82,10 @@ export function PurchaseForm({
   existing?: { id: string; values: PurchaseFormValues };
 }) {
   const router = useRouter();
-  const [purchaseId] = useState(() => existing?.id ?? newUuid());
+  const [purchaseId, setPurchaseId] = useState(() => existing?.id ?? newUuid());
   const [pending, startTransition] = useTransition();
+  const [queuedId, setQueuedId] = useState<string | null>(null);
+  const queuedItem = useOutboxItem(queuedId);
 
   const sackWeightByBagType = useMemo(
     () => new Map(bagTypes.map((b) => [b.id, b.sackWeightKg] as const)),
@@ -149,7 +156,26 @@ export function PurchaseForm({
             router.refresh();
             return;
           }
-          const res = await runBuyingAction(() => createPurchaseAction(payload));
+          const attempt = await tryOnline(() => createPurchaseAction(payload));
+          if (attempt === NETWORK) {
+            // Offline / network failure → queue under the same id (idempotent replay).
+            const supplierName = suppliers.find((s) => s.id === payload.supplierId)?.name ?? "Supplier";
+            try {
+              await enqueueOp({
+                id: purchaseId,
+                kind: "purchase",
+                payload: { ...payload, createdOffline: true },
+                label: `Purchase · ${supplierName} · ${payload.lines.length} line${payload.lines.length === 1 ? "" : "s"} · ${naira(totalKobo)}`,
+              });
+            } catch {
+              toast.error("Could not reach the server and this browser can't queue offline. Try again.");
+              return;
+            }
+            setQueuedId(purchaseId);
+            toast.info("Queued — will sync when you're back online");
+            return;
+          }
+          const res = await runBuyingAction(async () => attempt);
           if (!res.ok) return; // id is kept → retrying is idempotent
           const d = res.data;
           if (d.duplicate) toast.info(`${d.purchaseNumber ?? "Purchase"} was already saved`);
@@ -163,8 +189,57 @@ export function PurchaseForm({
       () => toast.error("Please fix the highlighted fields."),
     );
 
+  const recordAnother = () => {
+    setQueuedId(null);
+    setPurchaseId(newUuid());
+    form.reset({
+      supplierId: "",
+      buyingPointId: buyingPoints.length === 1 ? buyingPoints[0].id : "",
+      purchaseDate: lagosTodayISO(),
+      lines: [emptyLine(commodities, grades)],
+    });
+  };
+
+  if (queuedId) {
+    const synced = queuedItem?.status === "done";
+    return (
+      <div className="flex flex-col gap-4">
+        <OutboxIndicator kind="purchase" />
+        <Card className="gap-0 py-0">
+          <CardContent className="flex flex-col items-start gap-3 px-3 py-4 sm:px-4">
+            {synced ? (
+              <p className="flex items-center gap-2 font-medium text-emerald-700 dark:text-emerald-300">
+                <CircleCheck className="size-5" /> Synced{queuedItem?.ref?.number ? ` · ${queuedItem.ref.number}` : ""}
+              </p>
+            ) : queuedItem?.status === "failed" ? (
+              <p className="text-sm text-destructive">Sync failed: {queuedItem.error}</p>
+            ) : (
+              <QueuedBadge />
+            )}
+            <p className="text-sm text-muted-foreground">
+              {synced
+                ? "The purchase reached the server."
+                : "Saved on this phone. It will be sent automatically when the network is back — you can keep recording."}
+            </p>
+            <div className="flex w-full flex-col gap-2 sm:flex-row">
+              <Button type="button" className="h-12 sm:h-9" onClick={recordAnother}>
+                <Plus /> Record another purchase
+              </Button>
+              {synced && queuedItem?.ref ? (
+                <Button type="button" variant="outline" className="h-12 sm:h-9" onClick={() => router.push(`/purchases/${queuedItem.ref?.id}`)}>
+                  Open purchase
+                </Button>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <form noValidate onSubmit={(e) => void submit(false)(e)} className="flex flex-col gap-4">
+      {existing ? null : <OutboxIndicator kind="purchase" />}
       <Card className="gap-0 py-0">
         <CardContent className="flex flex-col gap-4 px-3 py-4 sm:px-4">
           <Controller

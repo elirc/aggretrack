@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Ban, CircleCheck, CircleX, PackageCheck, Pencil } from "lucide-react";
+import { toast } from "sonner";
 
 import {
   approvePurchaseAction,
@@ -12,7 +13,7 @@ import {
   rejectPurchaseAction,
 } from "@/actions/purchases";
 import { runBuyingAction } from "@/components/buying/action-result";
-import { displayKg } from "@/components/buying/format";
+import { displayKg, newUuid } from "@/components/buying/format";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,6 +27,8 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { OutboxIndicator, QueuedBadge } from "@/offline/OutboxIndicator";
+import { enqueueOp, NETWORK, tryOnline } from "@/offline/outbox";
 
 export type WarehouseOption = { id: string; name: string; bins: Array<{ id: string; name: string }> };
 
@@ -71,6 +74,9 @@ export function PurchaseActions({
   const [binId, setBinId] = useState("");
   const [sendSms, setSendSms] = useState(supplierHasPhone);
   const [done, setDone] = useState<ReceiveDone | null>(null);
+  // Offline receipt: client id for the outbox row (server idempotency is the purchase's received state).
+  const [receiptClientId] = useState(() => newUuid());
+  const [queued, setQueued] = useState(false);
 
   const label = purchaseNumber ?? "Purchase";
   const bins = warehouses.find((w) => w.id === warehouseId)?.bins ?? [];
@@ -79,6 +85,7 @@ export function PurchaseActions({
 
   return (
     <>
+      {canReceive ? <OutboxIndicator kind="receipt" className="mb-2" /> : null}
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
         {canReceive ? (
           <Button className="col-span-2 h-12 sm:h-9" onClick={() => setReceiveOpen(true)} disabled={pending}>
@@ -214,7 +221,22 @@ export function PurchaseActions({
         }}
       >
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
-          {done ? (
+          {queued ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Receipt queued · {label}</DialogTitle>
+                <DialogDescription>
+                  Saved on this phone. Stock is added and the GRN issued when it syncs.
+                </DialogDescription>
+              </DialogHeader>
+              <QueuedBadge />
+              <DialogFooter>
+                <Button className="h-11 sm:h-9" onClick={() => setReceiveOpen(false)}>
+                  Done
+                </Button>
+              </DialogFooter>
+            </>
+          ) : done ? (
             <>
               <DialogHeader>
                 <DialogTitle>Received · {done.grnNumber}</DialogTitle>
@@ -316,16 +338,32 @@ export function PurchaseActions({
                   disabled={pending || !warehouseId}
                   onClick={() =>
                     startTransition(async () => {
-                      const res = await runBuyingAction(
-                        () =>
-                          receivePurchaseAction({
-                            purchaseId,
-                            warehouseId,
-                            binId: binId || null,
-                            sendSms: supplierHasPhone && sendSms,
-                          }),
-                        { success: (d) => `Received · ${d.grnNumber}` },
-                      );
+                      const input = {
+                        purchaseId,
+                        warehouseId,
+                        binId: binId || null,
+                        sendSms: supplierHasPhone && sendSms,
+                      };
+                      const attempt = await tryOnline(() => receivePurchaseAction(input));
+                      if (attempt === NETWORK) {
+                        try {
+                          await enqueueOp({
+                            id: receiptClientId,
+                            kind: "receipt",
+                            payload: input,
+                            label: `Receipt · ${label} · ${warehouses.find((w) => w.id === warehouseId)?.name ?? "warehouse"}`,
+                          });
+                        } catch {
+                          toast.error("Could not reach the server and this browser can't queue offline. Try again.");
+                          return;
+                        }
+                        setQueued(true);
+                        toast.info("Receipt queued — will sync when you're back online");
+                        return;
+                      }
+                      const res = await runBuyingAction(async () => attempt, {
+                        success: (d) => `Received · ${d.grnNumber}`,
+                      });
                       if (res.ok) {
                         setDone({ grnNumber: res.data.grnNumber, totalNetKg: res.data.totalNetKg, lots: res.data.lots });
                       }

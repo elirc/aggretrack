@@ -4,8 +4,8 @@ function parseEvent(rawBody: string): PaystackEvent | null {
   try {
     const parsed: unknown = JSON.parse(rawBody);
     if (
-      typeof parsed === "object" &&
-    parsed !== null &&
+        typeof parsed === "object" &&
+      parsed !== null &&
       typeof (parsed as { event?: unknown }).event === "string"
     ) {
       const obj = parsed as { event: string; data?: unknown };
@@ -21,6 +21,9 @@ function parseEvent(rawBody: string): PaystackEvent | null {
   }
 }
 
+/** Header value the mock driver accepts as a valid x-paystack-signature. */
+export const MOCK_SIGNATURE = "mock-signature";
+
 export function createMockPayments(): PaymentsAdapter {
   return {
     async createPlan({ name }) {
@@ -31,13 +34,13 @@ export function createMockPayments(): PaymentsAdapter {
     async initializeSubscription({ email, planCode }) {
       const reference = `MOCK_${crypto.randomUUID()}`;
       console.log(`[PAYMENTS:mock] initializeSubscription email=${email} plan=${planCode} ref=${reference}`);
-      return { checkoutUrl: `/mock-checkout?ref=${reference}`, reference };
+      const qs = new URLSearchParams({ ref: reference, plan: planCode });
+      return { checkoutUrl: `/settings/billing/mock-checkout?${qs.toString()}`, reference };
     },
     verifyWebhook(rawBody, signature) {
-      // Mock driver: accept the fixed test signature, or anything outside production.
-      if (signature !== "mock-signature" && process.env.APP_ENV === "production") {
-        return null;
-      }
+      // Mock driver: only the fixed signature verifies (the demo mock-checkout
+      // page sends it). Anything else is rejected, like a bad HMAC would be.
+      if (signature !== MOCK_SIGNATURE) return null;
       return parseEvent(rawBody);
     },
     async cancelSubscription({ subscriptionCode }) {

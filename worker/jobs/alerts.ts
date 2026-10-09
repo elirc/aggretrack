@@ -1,20 +1,24 @@
 /**
- * alerts.scan (cron ~15 min): per org, using organisation_settings thresholds
- * (defaults when an org has no settings row):
- *  - low stock: on-hand kg per commodity < low_stock_threshold_kg
- *  - old stock: lots received more than old_stock_days ago with stock on hand
- *  - capacity:  warehouse on-hand kg >= capacity_alert_percent % of capacity_kg
- * Inserts org-wide notifications (user_id null). Dedupe: skip when an UNREAD
- * notification with the same (org, type, link) already exists.
- * Straightforward queries on purpose — Wave 4 (P4-D) refines.
+ * alerts.scan (cron ~15 min). For every organisation, run P2-B's typed scan
+ * queries (src/lib/services/alertRules.ts → scanAlerts, which reads the org's
+ * organisation_settings thresholds or the defaults) and turn the rows into
+ * org-wide notifications (user_id null):
+ *  - low stock:  one per commodity below low_stock_threshold_kg → /stock?commodity=…
+ *  - old stock:  AGGREGATED per commodity × warehouse (lots older than
+ *                old_stock_days with stock on hand) → /stock/ageing?commodity=…&warehouse=…
+ *  - capacity:   one per warehouse ≥ capacity_alert_percent → /stock?warehouse=…
+ * Dedupe (notifyOnce): skip when an UNREAD notification with the same
+ * (org, type, link, user) exists — once it is read, the next scan may raise it again.
+ * (P4-D reconciliation of P1-D's raw-SQL skeleton.)
  */
 import type { Job } from "pg-boss";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import { db, type DbOrTx } from "../../src/db/client";
-import { notifications, organisationSettings, organization } from "../../src/db/schema";
+import { lots, notifications, organization } from "../../src/db/schema";
 import { kgToGrams } from "../../src/lib/domain/units";
 import type { AlertsScanJob } from "../../src/lib/jobs";
+import { scanAlerts, type OldStockRow } from "../../src/lib/services/alertRules";
 import { pdfKg } from "../../src/pdf/format";
 
 type NotificationType = (typeof notifications.$inferInsert)["type"];
@@ -56,123 +60,111 @@ export async function notifyOnce(dbx: DbOrTx, n: NotifyInput): Promise<boolean> 
   return true;
 }
 
-const DEFAULTS = { lowStockThresholdKg: "1000", oldStockDays: 90, capacityAlertPercent: 90 };
-
-type OrgThresholds = {
-  orgId: string;
-  lowStockThresholdKg: string;
-  oldStockDays: number;
-  capacityAlertPercent: number;
+export type OldStockGroup = {
+  commodityId: string;
+  commodityName: string;
+  warehouseId: string;
+  warehouseName: string;
+  lotCount: number;
+  onHandGrams: number;
+  oldestAgeDays: number;
 };
 
-async function loadOrgThresholds(dbx: DbOrTx): Promise<OrgThresholds[]> {
-  const rows = await dbx
-    .select({
-      orgId: organization.id,
-      low: organisationSettings.lowStockThresholdKg,
-      days: organisationSettings.oldStockDays,
-      pct: organisationSettings.capacityAlertPercent,
-    })
-    .from(organization)
-    .leftJoin(organisationSettings, eq(organisationSettings.organisationId, organization.id));
-  return rows.map((r) => ({
-    orgId: r.orgId,
-    lowStockThresholdKg: r.low ?? DEFAULTS.lowStockThresholdKg,
-    oldStockDays: r.days ?? DEFAULTS.oldStockDays,
-    capacityAlertPercent: r.pct ?? DEFAULTS.capacityAlertPercent,
-  }));
+/** Collapse per-lot old-stock rows into one group per commodity × warehouse. */
+export function groupOldStock(rows: OldStockRow[], commodityByLot: Map<string, string>): OldStockGroup[] {
+  const groups = new Map<string, OldStockGroup>();
+  for (const r of rows) {
+    const commodityId = commodityByLot.get(r.lotId);
+    if (!commodityId) continue;
+    const key = `${commodityId}|${r.warehouseId}`;
+    const g = groups.get(key);
+    if (g) {
+      g.lotCount++;
+      g.onHandGrams += r.onHandGrams;
+      g.oldestAgeDays = Math.max(g.oldestAgeDays, r.ageDays);
+    } else {
+      groups.set(key, {
+        commodityId,
+        commodityName: r.commodityName,
+        warehouseId: r.warehouseId,
+        warehouseName: r.warehouseName,
+        lotCount: 1,
+        onHandGrams: r.onHandGrams,
+        oldestAgeDays: r.ageDays,
+      });
+    }
+  }
+  return [...groups.values()];
 }
 
-async function scanLowStock(dbx: DbOrTx, t: OrgThresholds): Promise<number> {
-  // Only commodities with movement history (never-stocked commodities don't alert).
-  const res = await dbx.execute<{ commodity_id: string; name: string; on_hand_kg: string }>(sql`
-    select c.id as commodity_id, c.name, coalesce(sum(m.kg), 0)::text as on_hand_kg
-    from commodities c
-    join lots l on l.commodity_id = c.id and l.organisation_id = c.organisation_id
-    join stock_movements m on m.lot_id = l.id and m.organisation_id = c.organisation_id
-    where c.organisation_id = ${t.orgId} and c.active
-    group by c.id, c.name
-    having coalesce(sum(m.kg), 0) < ${t.lowStockThresholdKg}::numeric
-  `);
-  let inserted = 0;
-  for (const r of res.rows) {
+export type OrgScanResult = { lowStock: number; oldStock: number; capacity: number };
+
+/** Scan one organisation and write its notifications. Returns how many were inserted per type. */
+export async function scanOrgAlerts(dbx: DbOrTx, orgId: string, now: Date = new Date()): Promise<OrgScanResult> {
+  const scan = await scanAlerts(dbx, orgId, now);
+  const out: OrgScanResult = { lowStock: 0, oldStock: 0, capacity: 0 };
+
+  for (const r of scan.lowStock) {
     const ok = await notifyOnce(dbx, {
-      orgId: t.orgId,
+      orgId,
       type: "low_stock",
-      title: `Low stock: ${r.name}`,
-      body: `${pdfKg(kgToGrams(r.on_hand_kg))} kg on hand (threshold ${pdfKg(kgToGrams(t.lowStockThresholdKg))} kg).`,
-      link: `/stock?commodity=${r.commodity_id}`,
+      title: `Low stock: ${r.commodityName}`,
+      body: `${pdfKg(r.onHandGrams)} kg on hand (threshold ${pdfKg(kgToGrams(r.thresholdKg))} kg).`,
+      link: `/stock?commodity=${r.commodityId}`,
     });
-    if (ok) inserted++;
+    if (ok) out.lowStock++;
   }
-  return inserted;
-}
 
-async function scanOldStock(dbx: DbOrTx, t: OrgThresholds, now: Date): Promise<number> {
-  const res = await dbx.execute<{ lot_id: string; lot_number: string; on_hand_kg: string; age_days: string }>(sql`
-    select l.id as lot_id, l.lot_number, sum(m.kg)::text as on_hand_kg,
-           floor(extract(epoch from (${now.toISOString()}::timestamptz - l.received_at)) / 86400)::text as age_days
-    from lots l
-    join stock_movements m on m.lot_id = l.id and m.organisation_id = l.organisation_id
-    where l.organisation_id = ${t.orgId}
-      and l.received_at < ${now.toISOString()}::timestamptz - make_interval(days => ${t.oldStockDays}::int)
-    group by l.id, l.lot_number, l.received_at
-    having sum(m.kg) > 0
-  `);
-  let inserted = 0;
-  for (const r of res.rows) {
-    const ok = await notifyOnce(dbx, {
-      orgId: t.orgId,
-      type: "old_stock",
-      title: `Old stock: lot ${r.lot_number}`,
-      body: `${pdfKg(kgToGrams(r.on_hand_kg))} kg still on hand after ${r.age_days} days (limit ${t.oldStockDays}).`,
-      link: `/stock/lots/${r.lot_id}`,
-    });
-    if (ok) inserted++;
+  if (scan.oldStock.length > 0) {
+    // alertRules' OldStockRow carries the commodity name only; resolve ids (org-scoped) for the link.
+    const lotIds = [...new Set(scan.oldStock.map((r) => r.lotId))];
+    const lotRows = await dbx
+      .select({ id: lots.id, commodityId: lots.commodityId })
+      .from(lots)
+      .where(and(eq(lots.organisationId, orgId), inArray(lots.id, lotIds)));
+    const commodityByLot = new Map(lotRows.map((l) => [l.id, l.commodityId]));
+    for (const g of groupOldStock(scan.oldStock, commodityByLot)) {
+      const lotsLabel = g.lotCount === 1 ? "1 lot" : `${g.lotCount} lots`;
+      const ok = await notifyOnce(dbx, {
+        orgId,
+        type: "old_stock",
+        title: `Old stock: ${g.commodityName} at ${g.warehouseName}`,
+        body: `${lotsLabel}, ${pdfKg(g.onHandGrams)} kg on hand; oldest ${g.oldestAgeDays} days.`,
+        link: `/stock/ageing?commodity=${g.commodityId}&warehouse=${g.warehouseId}`,
+      });
+      if (ok) out.oldStock++;
+    }
   }
-  return inserted;
-}
 
-async function scanCapacity(dbx: DbOrTx, t: OrgThresholds): Promise<number> {
-  const res = await dbx.execute<{ warehouse_id: string; name: string; capacity_kg: string; on_hand_kg: string }>(sql`
-    select w.id as warehouse_id, w.name, w.capacity_kg::text as capacity_kg,
-           coalesce(sum(m.kg), 0)::text as on_hand_kg
-    from warehouses w
-    left join stock_movements m on m.warehouse_id = w.id and m.organisation_id = w.organisation_id
-    where w.organisation_id = ${t.orgId} and w.active and w.capacity_kg > 0
-    group by w.id, w.name, w.capacity_kg
-    having coalesce(sum(m.kg), 0) >= w.capacity_kg * ${t.capacityAlertPercent}::numeric / 100
-  `);
-  let inserted = 0;
-  for (const r of res.rows) {
-    const onHand = kgToGrams(r.on_hand_kg);
-    const cap = kgToGrams(r.capacity_kg);
-    const pct = cap > 0 ? Math.round((onHand / cap) * 100) : 0;
+  for (const r of scan.nearCapacity) {
     const ok = await notifyOnce(dbx, {
-      orgId: t.orgId,
+      orgId,
       type: "capacity",
-      title: `Warehouse near capacity: ${r.name}`,
-      body: `${pdfKg(onHand)} kg of ${pdfKg(cap)} kg (${pct}%, alert at ${t.capacityAlertPercent}%).`,
-      link: `/stock?warehouse=${r.warehouse_id}`,
+      title: `Warehouse near capacity: ${r.warehouseName}`,
+      body: `${pdfKg(r.onHandGrams)} kg of ${pdfKg(kgToGrams(r.capacityKg))} kg (${r.usedPercent}% full).`,
+      link: `/stock?warehouse=${r.warehouseId}`,
     });
-    if (ok) inserted++;
+    if (ok) out.capacity++;
   }
-  return inserted;
+
+  return out;
 }
 
 export type AlertsScanResult = { orgs: number; lowStock: number; oldStock: number; capacity: number };
 
 export async function runAlertsScan(dbx: DbOrTx = db, now: Date = new Date()): Promise<AlertsScanResult> {
   const result: AlertsScanResult = { orgs: 0, lowStock: 0, oldStock: 0, capacity: 0 };
-  for (const t of await loadOrgThresholds(dbx)) {
+  const orgs = await dbx.select({ id: organization.id }).from(organization);
+  for (const { id } of orgs) {
     try {
-      result.lowStock += await scanLowStock(dbx, t);
-      result.oldStock += await scanOldStock(dbx, t, now);
-      result.capacity += await scanCapacity(dbx, t);
+      const r = await scanOrgAlerts(dbx, id, now);
+      result.lowStock += r.lowStock;
+      result.oldStock += r.oldStock;
+      result.capacity += r.capacity;
       result.orgs++;
     } catch (err) {
       // One broken org must not block the rest.
-      console.error(`[alerts] scan failed for org ${t.orgId}`, err);
+      console.error(`[alerts] scan failed for org ${id}`, err);
     }
   }
   return result;

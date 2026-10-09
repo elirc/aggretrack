@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { OfflineBoot } from "@/offline/OfflineBoot";
 import { BOTTOM_NAV, NAV_SECTIONS, type NavItem, type NavSection } from "./nav-items";
 import type { Permission, Role } from "@/lib/authz/permissions";
 import { can } from "@/lib/authz/permissions";
@@ -43,6 +45,7 @@ export function AppShell({ orgName, userName, role, readOnly, children }: AppShe
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
+      <OfflineBoot />
       {/* Top bar */}
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-5xl items-center gap-2 px-4">
@@ -94,6 +97,7 @@ export function AppShell({ orgName, userName, role, readOnly, children }: AppShe
               Read only
             </Badge>
           ) : null}
+          <NotificationBell className={readOnly ? undefined : "ml-auto"} />
         </div>
       </header>
 
