@@ -30,6 +30,9 @@ services:
       PAYMENTS_DRIVER: mock
       STORAGE_DRIVER: local
       STORAGE_LOCAL_DIR: /app/storage
+      # Demo: open the app with no login screen, signed in as the seeded owner.
+      AUTO_LOGIN_EMAIL: owner@demo.aggretrack.local
+      AUTO_LOGIN_PASSWORD: demo1234
     volumes:
       - appstorage:/app/storage
     depends_on:
